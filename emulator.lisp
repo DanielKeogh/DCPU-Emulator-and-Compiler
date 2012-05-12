@@ -82,11 +82,8 @@
 
 ;;Memory access
 
-(defgeneric ram-at (emulator num)
-  (:documentation "Show the ram at a given location"))
-
-(defmethod ram-at ((em emulator) num)
-  (aref (ram em) num))
+(defmacro ram-at (em num)
+  `(aref (ram ,em) ,num))
 
 (defgeneric get-word-at-pc (emulator)
   (:documentation "Gets the whole word at the pointer"))
@@ -122,18 +119,18 @@
 (defmethod op-code-at-pc ((em emulator))
   (bit-vector->op-code-vector (get-word-at-pc em)))
 
-(defgeneric get-memory-object (emulator bits value-ref)
-  (:documentation "Gets the op code value at the pointer"))
+(defgeneric get-memory-accessor (emulator bits value-ref)
+  (:documentation "Gets the accessor at the pointer"))
 
-(defmethod get-memory-object ((emu emulator) (bits bit-vector) value-ref)
+(defmacro get-memory-accessor ((emu emulator) (bits bit-vector) value-ref)
 	     (cond ((and (read-from-next-word-p bits)
 			 (next-word-p bits))
-		    (list (ram-at emu (bit-vector->integer (ram-at emu value-ref))) (bit-vector->integer (ram-at emu value-ref))))
+		    `(ram-at ,emu (bit-vector->integer (ram-at ,emu ,value-ref))))
 		   ((read-from-next-word-p bits)
-		    (list (ram-at emu value-ref)))
+		    `(ram-at ,emu ,value-ref))
 		   ((register-p bits)
-		    (list (bit-vector->register-mem emu bits)))
-		   (T (list (subseq bits 1 5)))))
+		    `(aref (registers ,emu) (bit-vector->integer ,bits)))
+		   (T (subseq bits 1 5))))
 
 (defgeneric get-memory-objects (emulator ref)
   (:documentation "Gets the op code value at the pointer"))
@@ -148,8 +145,8 @@
 			     1 0))
 	 (value2-ref (+ ref value2-ref-mod))
 	 (value1-ref (+ ref value1-ref-mod value2-ref-mod))) 
-    (list (get-memory-object em value1 value1-ref) 
-	  (get-memory-object em value2 value2-ref)
+    (list (get-memory-accessor em value1 value1-ref) 
+	  (get-memory-accessor em value2 value2-ref)
 	  (+ value1-ref-mod value2-ref-mod))))
 
 ;;System ops:
@@ -160,17 +157,19 @@
   (> 31 (bit-vector->integer (value2-at-pc em))))
 
 (defmacro with-op-scope (em &rest body)
-  `(when (op-is-settable ,em)
-     (let* ((mem-objects (get-memory-objects ,em (pc ,em)))
-	    (a-vec (caadr mem-objects))
-	    (b-vec (caar mem-objects))
-	    (a-val (bit-vector->integer a-vec))
-	    (b-val (bit-vector->integer b-vec))
-	    (evaluation (progn ,@body)))
-       (when evaluation
-	 (replace a-vec (buffer-bit-vector-to-length 
-		     16
-		     (integer->bit-vector evaluation)))))))
+  (let ((mem-objects (get-memory-objects em (pc em))))
+    `(when (op-is-settable ,em)
+       (let* ((a-vec ,(caadr mem-objects ))
+	      (b-vec ,(caar mem-objects))
+	      (a-val (bit-vector->integer a-vec))
+	      (b-val (bit-vector->integer b-vec))
+	      (evaluation (progn ,@body)))
+	 (when evaluation
+	 (print mem-objects)
+	 (setf ,(cadadr mem-objects) 
+	       (buffer-bit-vector-to-length 
+		16
+		(integer->bit-vector evaluation))))))))
 
 (defgeneric set-op (em)
   (:documentation "Sets a to b"))
@@ -308,32 +307,21 @@
     (funcall (bit-vector->command (op-code-at-pc em)) em)
     (increment-pc em))
 
-
-
-
-(defmethod pointer-value ((em emulator) (reg register))
-  (translate-memory-address em (value-accessor reg)))
-
-(defmethod next-pointer-value ((em emulator) (reg register))
-  (setf (value-accessor reg) (1+ (value-accessor reg)))
-  (pointer-value em reg))
-
-
 (defmethod insert-code-into-emulator ((em emulator) list-of-bit-vectors)
   (loop for bitv in list-of-bit-vectors
      for i from 0 do
        (setf (aref (ram em) i) bitv)))
 
-(defmethod bit-vector->register-mem ((em emulator) (bitv bit-vector))
-  (let* ((reg-int (bit-vector->integer bitv))
-	 (register (aref (registers em) (mod reg-int 8))))
-    (cond ((< reg-int 8) register)
-	  ((< reg-int 16) (ram-at em (bit-vector->integer register)))
-	  ((< reg-int 23) (ram-at em (1+ (bit-vector->integer register)))))))
+;(defmethod bit-vector->register-mem ((em emulator) (bitv bit-vector))
+;  (let* ((reg-int (bit-vector->integer bitv))
+;	 (register (aref (registers em) (mod reg-int 8))))
+;    (cond ((< reg-int 8) register)
+;	  ((< reg-int 16) (ram-at em (bit-vector->integer register)))
+;	  ((< reg-int 23) (ram-at em (1+ (bit-vector->integer register)))))))
 
 (defmethod setc ((em emulator) (bit1 bit-vector) (bit2 bit-vector))
   (loop 
-     for x being the elements of (buffer-bit-vector-to-minlength 16 bit2)
+     for x being the elements of (buffer-bit-vector-to-length 16 bit2)
      for i from 0 to 15 do
        (setf (aref bit1 i) x)))
 		    
